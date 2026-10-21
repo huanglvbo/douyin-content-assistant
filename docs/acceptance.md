@@ -1,0 +1,14 @@
+# Release acceptance
+
+This checklist describes required acceptance work, not actions already performed. Source tests, development-machine runs, and a friend's use in WorkBuddy provide different kinds of evidence.
+
+- On a Windows x64 account without Python preinstalled, extract the package into paths containing non-ASCII characters and spaces, then run the installer. Verify the bootstrap SHA-256, isolated runtime, dependencies, browser, and model downloads, including retry after interrupted connectivity.
+- Import the generated MCP configuration and Skill in the target WorkBuddy version and verify all seven tools. Before relying on automatic registration, verify that the client actually reads the documented `.codebuddy` location and that unrelated configuration is preserved.
+- Use the tester's own Douyin QR login. Do not copy developer login state, QR codes, identity databases, or historical reports. Expired codes and sessions must produce recoverable instructions.
+- Supply only the name or ID of a previously unbound creator. Verify account identity, the latest publication time, video link, all four integer metrics, and collection time. Read every transcript page.
+- Have the host AI review the complete original transcript and submit corrections. Verify that original hashes are unchanged, time segments are retained, uncertain wording is preserved, and the change log and overview are accurate. Only then count the result as complete delivery.
+- Rechecking a video should refresh metrics; after complete delivery, the same video should be reported as unchanged. Missing metrics, CAPTCHAs, ambiguous identities, image posts, and transcription failures must not advance successful delivery history.
+- Reconnect MCP and retrieve a completed report. Run a local scheduled task and verify connector and Skill availability, permissions, model allowance, and output location. Expired login or a request for human confirmation must not be reported as successful execution.
+- Extract the final source ZIP and verify its internal manifest and SHA256SUMS. Confirm that it contains no cookies, QR artifacts, SQLite data, real reports, media, models, virtual environments, logs, environment dumps, developer-specific paths, or private keys.
+
+The maintainer records results from actual execution. Unexecuted acceptance items remain unaccepted; simulated tests do not replace them.
