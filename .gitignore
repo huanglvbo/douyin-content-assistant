@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.local-test/
+.data/
+*.sqlite3*
+storage-state.json
+runtime.json
+.env

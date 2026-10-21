@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "creator-notes"
+version = "0.1.0"
+description = "Local creator discovery, timestamped transcription, and reviewed notes for MCP hosts"
+requires-python = ">=3.12,<3.14"
+license = "MIT"
+dependencies = ["mcp==1.27.2", "playwright==1.60.0", "faster-whisper==1.2.1", "httpx==0.28.1", "av==17.1.0", "ctranslate2==4.8.0"]
+
+[project.scripts]
+creator-notes = "creator_notes.cli:main"
+creator-notes-mcp = "creator_notes.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
