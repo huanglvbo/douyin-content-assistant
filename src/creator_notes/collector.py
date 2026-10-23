@@ -250,7 +250,7 @@ class BrowserCollector:
             return
         self._playwright = await async_playwright().start()
         try:
-            self._browser = await self._playwright.chromium.launch(headless=self.headless)
+            self._browser = await self._playwright.chromium.launch(channel='chromium', headless=self.headless)
             options: dict[str, Any] = {
                 "locale": "zh-CN", "viewport": {"width": 1440, "height": 1080},
                 "user_agent": USER_AGENT,

@@ -21,6 +21,10 @@ METRICS = ('like', 'comment', 'collect', 'share')
 MODELS = {'fast': 'base', 'balanced': 'small', 'accurate': 'medium'}
 
 
+class SavedMediaError(ValueError):
+    code = 'saved_media_changed'
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -91,6 +95,13 @@ class Store:
         if not row:
             raise ValueError('Check not found')
         return json.loads(row[0])
+
+    def claim_resume(self, job, previous):
+        """Claim a stopped job exactly once, including across MCP processes."""
+        with self.connect() as db:
+            cursor = db.execute('UPDATE jobs SET payload=? WHERE id=? AND payload=?',
+                (json.dumps(job, ensure_ascii=False), job['check_id'], previous))
+            return cursor.rowcount == 1
 
     def jobs(self):
         with self.connect() as db:
@@ -163,6 +174,14 @@ def originals_match(job):
         return False
 
 
+def media_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class Manager:
     def __init__(self, paths=None, collector_factory=None, acquire=None, recognize=None):
         self.paths = (paths or AppPaths.current()).prepare()
@@ -194,9 +213,84 @@ class Manager:
             job = {'check_id': uuid.uuid4().hex, 'query': creator, 'asr_profile': profile,
                    'status': 'queued', 'stage': 'Waiting for local collection', 'complete': False,
                    'delivery_complete': False, 'review_status': 'not_started',
-                   'owner_pid': os.getpid(), 'created_at': now()}
+                   'owner_pid': os.getpid(), 'created_at': now(), 'refresh_identity': bool(refresh_identity)}
             self.store.save(job)
             self.pool.submit(self.run, job['check_id'], refresh_identity)
+            return job
+
+    def _saved_media(self, job):
+        checkpoint = job.get('media_checkpoint')
+        if not isinstance(checkpoint, dict):
+            return None
+        try:
+            path = Path(checkpoint['path'])
+            owned = self.paths.work / valid_id(job['check_id'])
+            if owned.is_symlink() or (hasattr(owned, 'is_junction') and owned.is_junction()):
+                return None
+            expected = owned.resolve()
+            if (path.is_symlink() or not path.is_file() or path.resolve().parent != expected
+                    or expected.parent != self.paths.work.resolve()
+                    or any(item.is_symlink() or (hasattr(item, 'is_junction') and item.is_junction())
+                           for item in (path.parent, self.paths.work))
+                    or path.stat().st_size != checkpoint['bytes']
+                    or checkpoint['video_id'] != job['latest']['video_id']
+                    or checkpoint['author'] != job['profile']['sec_uid']
+                    or media_sha256(path) != checkpoint['sha256']):
+                return None
+            return path.resolve()
+        except (OSError, KeyError, TypeError, ValueError):
+            return None
+
+    def resume(self, check_id, profile=None):
+        """Continue the same stopped job; never solve or repeatedly retry a CAPTCHA."""
+        with self.lock:
+            if self.stopping.is_set():
+                raise ValueError('The worker is stopping; reconnect the MCP service before resuming')
+            job = self.store.get(check_id)
+            previous_payload = json.dumps(job, ensure_ascii=False)
+            if job['status'] in ('queued', 'running'):
+                return job
+            if profile is not None and profile not in MODELS:
+                raise ValueError('Unknown transcription profile')
+            blocked = job['status'] in ('captcha', 'login_required')
+            model_error = job['status'] == 'error' and job.get('error_code') in {
+                'model_unavailable', 'dependency_missing', 'transcription_failed'}
+            if not (blocked or model_error or job['status'] == 'interrupted') or job.get('files'):
+                raise ValueError('This job cannot resume; start a new check instead')
+            if blocked:
+                from .login import login_status
+                state = login_status(self.paths.session)
+                try:
+                    verified_at = datetime.fromisoformat(state.get('updated_at', ''))
+                    blocked_at = datetime.fromisoformat(job['finished_at'])
+                    fresh = verified_at > blocked_at
+                except (ValueError, TypeError, KeyError):
+                    fresh = False
+                if (state.get('status') != 'logged_in' or not state.get('storage_state_ready')
+                        or not fresh):
+                    raise ValueError('Complete a new dedicated login or human verification before resuming')
+            if job.get('media_checkpoint') and self._saved_media(job) is None:
+                raise ValueError('Saved media changed or is missing; start a new check')
+            if len([entry for entry in self.store.jobs() if entry['status'] in ('queued', 'running')]) >= 8:
+                raise ValueError('Queue is full; wait for current checks')
+            failures = job.get('attempt_history', [])
+            failures.append({key: job[key] for key in ('status', 'error_code', 'stage', 'finished_at') if key in job})
+            for key in ('error_code', 'finished_at', 'progress'):
+                job.pop(key, None)
+            job.update(status='queued', stage='Continuing the saved check', owner_pid=os.getpid(),
+                       asr_profile=profile or job['asr_profile'], attempt_history=failures[-20:],
+                       resumed_at=now(), resume_count=job.get('resume_count', 0) + 1)
+            if not self.store.claim_resume(job, previous_payload):
+                current = self.store.get(check_id)
+                if current['status'] in ('queued', 'running'):
+                    return current
+                raise ValueError('The saved check changed; read its latest status before resuming')
+            try:
+                self.pool.submit(self.run, check_id, job.get('refresh_identity', False))
+            except RuntimeError:
+                job.update(status='interrupted', stage='Worker stopped; reconnect before resuming', finished_at=now())
+                self.store.save(job)
+                raise ValueError('The worker stopped; reconnect the MCP service before resuming') from None
             return job
 
     def run(self, check_id, refresh_identity=False):
@@ -212,8 +306,21 @@ class Manager:
             update(stage=str(stage), progress=fraction)
 
         try:
-            update(status='running')
-            progress('Verifying creator identity')
+            update(status='running', resume_available=False)
+            saved_media = self._saved_media(job)
+            if job.get('media_checkpoint') and saved_media is None:
+                raise SavedMediaError('Saved media changed; start a new check')
+            requested_model = MODELS[job['asr_profile']]
+            selection = {'requested_model': requested_model, 'selected_model': requested_model,
+                         'reason': 'injected_recognizer'}
+            if self.recognize is None:
+                from .recognition import ensure_model_cache, select_model
+                progress('Checking the local speech model before opening Douyin')
+                update(model_selection=select_model(requested_model, self.paths.models))
+                selection = ensure_model_cache(self.paths.models, requested_model, progress=progress)
+            update(model_selection=selection)
+            model = selection['selected_model']
+            progress('Reusing saved video data and audio' if saved_media else 'Verifying creator identity')
 
             async def collect():
                 factory = self.collector_factory
@@ -233,7 +340,9 @@ class Manager:
                     update(profile=identity, stage='Reading the newest work and four engagement metrics')
                     return await collector.collect_latest(identity)
 
-            collected = asyncio.run(collect())
+            collected = ({'latest': job['latest'], 'profile': job['profile'],
+                          'coverage': job.get('coverage'), 'collected_at': job['collected_at']}
+                         if saved_media else asyncio.run(collect()))
             if collected is None:
                 return
             video, identity = collected['latest'], collected.get('profile') or job['profile']
@@ -248,7 +357,6 @@ class Manager:
                 return
             missing = [name for name in METRICS if video['statistics'].get(name) is None]
             update(missing_metrics=missing)
-            model = MODELS[job['asr_profile']]
             cached = next((entry for entry in self.store.jobs()
                 if entry.get('status') in ('done', 'partial') and entry.get('latest', {}).get('video_id') == video['video_id']
                 and entry.get('profile', {}).get('sec_uid') == identity['sec_uid']
@@ -265,7 +373,7 @@ class Manager:
                     transcript = None
             reused = transcript is not None
             if transcript is None:
-                progress('Acquiring video audio')
+                progress('Reusing saved audio' if saved_media else 'Acquiring video audio')
                 acquire = self.acquire
                 if acquire is None:
                     from .media import acquire_video
@@ -274,15 +382,22 @@ class Manager:
                 if recognize is None:
                     from .recognition import transcribe_file
                     recognize = transcribe_file
-                media = acquire(video['url'], self.paths.work / check_id,
+                media = saved_media or acquire(video['url'], self.paths.work / check_id,
                     state_path=self.paths.session / 'storage-state.json', progress=progress)
+                # A complete download survives ASR/model failures. Bind it to
+                # this exact creator/video and check it before every reuse.
+                media = Path(media)
+                if media.is_file() and media.resolve().parent == (self.paths.work / check_id).resolve():
+                    update(media_checkpoint={'path': str(media.resolve()), 'bytes': media.stat().st_size,
+                        'sha256': media_sha256(media), 'video_id': video['video_id'], 'author': identity['sec_uid']})
                 transcript = recognize(media, self.paths.models, model=model, progress=progress)
             if not transcript.get('segments') or not transcript.get('transcript', '').strip():
                 update(status='no_speech', stage='No deliverable speech was recognized', finished_at=now())
                 return
             job.update(status='partial' if missing else 'done', complete=not missing, review_status='pending',
                        stage='Raw transcript ready; host AI review, corrections, and overview are pending', finished_at=now(),
-                       transcription={'model': model, 'duration_seconds': transcript['duration'],
+                       transcription={'model': transcript.get('model', model), 'requested_model': requested_model,
+                           'media_reused': bool(saved_media), 'duration_seconds': transcript['duration'],
                            'segments': len(transcript['segments']), 'characters': len(transcript['transcript']),
                            'reused': reused, 'machine_transcript': True})
             export_report(job, transcript, self.paths.reports)
@@ -293,7 +408,11 @@ class Manager:
             known = {'captcha', 'login_required', 'identity_unverified', 'no_data', 'not_found', 'ambiguous'}
             status = 'interrupted' if isinstance(exc, InterruptedError) else code if code in known else 'error'
             update(status=status, complete=False,
-                   delivery_complete=False, error_code=code, stage='Check incomplete; delivery history was not advanced', finished_at=now())
+                   delivery_complete=False, error_code=code,
+                   resume_available=status in ('captcha', 'login_required', 'interrupted') or code in
+                       ('model_unavailable', 'dependency_missing', 'transcription_failed'),
+                   stage=('Human verification is required; complete it in the dedicated login window before resuming'
+                          if status == 'captcha' else 'Check incomplete; saved work is retained for retry'), finished_at=now())
 
     def report(self, check_id):
         return self.store.get(check_id)
@@ -340,5 +459,6 @@ class Manager:
         return result
 
     def close(self):
-        self.stopping.set()
+        with self.lock:
+            self.stopping.set()
         self.pool.shutdown(wait=True, cancel_futures=True)

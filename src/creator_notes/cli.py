@@ -28,10 +28,14 @@ def doctor():
     except (ImportError, OSError):
         pass
     paths = AppPaths.current()
+    from .recognition import model_inventory
+    cached_models = model_inventory(paths.models)
     return {'version': __version__, 'python': platform.python_version(), 'dependencies': versions,
             'chromium_installed': browser_installed, 'data_home': str(paths.home),
             'models': str(paths.models), 'reports': str(paths.reports),
             'session_saved': (paths.session / 'storage-state.json').is_file(),
+            'cached_speech_models': cached_models,
+            'first_transcription_requires_model_download': not bool(cached_models),
             'ready_for_login': all(versions.values()) and browser_installed,
             'workbuddy_acceptance': 'not_run', 'upstream_application_required': False}
 
@@ -41,7 +45,8 @@ def parser():
     sub = result.add_subparsers(dest='command', required=True)
     sub.add_parser('doctor')
     sub.add_parser('mcp')
-    sub.add_parser('login')
+    login = sub.add_parser('login')
+    login.add_argument('--headless', action='store_true', help='Use a QR-only helper; sliders require a visible retry')
     sub.add_parser('login-status')
     check = sub.add_parser('check')
     check.add_argument('creator')
@@ -50,6 +55,9 @@ def parser():
     check.add_argument('--wait', action='store_true', help='Compatibility option; CLI always retains its worker until completion')
     report = sub.add_parser('report')
     report.add_argument('check_id')
+    resume = sub.add_parser('resume')
+    resume.add_argument('check_id')
+    resume.add_argument('--profile', choices=('fast', 'balanced', 'accurate'))
     transcript = sub.add_parser('transcript')
     transcript.add_argument('check_id')
     transcript.add_argument('--offset', type=int, default=0)
@@ -75,14 +83,15 @@ def main():
         if args.command == 'doctor':
             output = doctor()
         elif args.command == 'prepare-model':
-            from faster_whisper.utils import download_model
+            from .recognition import ensure_model_cache
             paths = AppPaths.current().prepare()
-            location = download_model(args.model, cache_dir=str(paths.models))
-            output = {'status': 'model_ready', 'model': args.model, 'path': location}
+            selection = ensure_model_cache(paths.models, args.model, prefer_cached=False)
+            output = {'status': 'model_ready', 'model': args.model, 'path': selection['cache_path']}
         elif args.command in ('login', 'login-status'):
             from .login import begin_login, login_status
             paths = AppPaths.current().prepare()
-            output = begin_login(paths.session) if args.command == 'login' else login_status(paths.session)
+            output = (begin_login(paths.session, verification_window=not args.headless)
+                      if args.command == 'login' else login_status(paths.session))
         elif args.command == 'transcribe':
             from .recognition import transcribe_file
             destination = Path(args.output).expanduser().resolve()
@@ -111,6 +120,12 @@ def main():
                     output = job
                 elif args.command == 'report':
                     output = manager.report(args.check_id)
+                elif args.command == 'resume':
+                    job = manager.resume(args.check_id, args.profile)
+                    while job['status'] in ('queued', 'running'):
+                        time.sleep(.5)
+                        job = manager.report(job['check_id'])
+                    output = job
                 elif args.command == 'transcript':
                     output = manager.transcript(args.check_id, args.offset, args.limit)
                 elif args.command == 'review':

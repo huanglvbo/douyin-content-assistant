@@ -219,7 +219,7 @@ def acquire_video(video_url: str, directory: Path, state_path: Path | None = Non
     temporary = directory / f'{requested_id}-{uuid.uuid4().hex}.partial'
     try:
         with sync_playwright() as runtime:
-            browser = runtime.chromium.launch(headless=True)
+            browser = runtime.chromium.launch(channel='chromium', headless=True)
             try:
                 options = {'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'locale': 'zh-CN'}
                 if state_path:

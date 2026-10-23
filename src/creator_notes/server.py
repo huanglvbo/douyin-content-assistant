@@ -25,6 +25,12 @@ def get_report(check_id: str) -> dict:
 
 
 @mcp.tool()
+def resume_check(check_id: str, profile: str | None = None) -> dict:
+    """Resume the SAME interrupted/model-failed check without recollecting valid saved audio. For captcha/login_required, first complete a newer dedicated user login/verification. Never automatically retry or solve challenges. Poll get_report after resume."""
+    return manager().resume(check_id, profile)
+
+
+@mcp.tool()
 def get_transcript(check_id: str, offset: int = 0, limit: int = 80) -> dict:
     """Read ordered original ASR segments with indices and source_sha256. Follow next_offset until null before reviewing. Never summarize the title as speech."""
     return manager().transcript(check_id, offset, limit)
@@ -37,10 +43,10 @@ def submit_review(check_id: str, review: dict) -> dict:
 
 
 @mcp.tool()
-def start_login() -> dict:
-    """Prepare a dedicated local Douyin login QR. User scans normally. Poll login_status for image path; no other browser profiles or cookie contents are read."""
+def start_login(verification_window: bool = True) -> dict:
+    """Prepare a dedicated local Douyin QR login. The visible verification window keeps the same browser open for human-handled sliders. User scans; poll login_status, then resume_check the saved check. No other browser profiles or cookie contents are read."""
     from .login import begin_login
-    return begin_login(manager().paths.session)
+    return begin_login(manager().paths.session, verification_window=verification_window)
 
 
 @mcp.tool()
