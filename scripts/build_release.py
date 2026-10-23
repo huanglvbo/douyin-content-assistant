@@ -10,7 +10,7 @@ import tomllib
 import zipfile
 
 
-ROOT_FILES = {"pyproject.toml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore"}
+ROOT_FILES = {"pyproject.toml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore", "AGENTS.md"}
 ROOT_SUFFIXES = {"src": {".py"}, "scripts": {".py", ".ps1", ".cmd"}, "tests": {".py"}, "skills": {".md", ".yaml", ".yml"}, "docs": {".md"}}
 DENIED_NAMES = {".data", ".venv", "__pycache__", ".git", ".env", "runtime.json", "storage-state.json", "node_modules", "verification", "reports", "models", "output", ".local-test"}
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
 import shutil
@@ -24,13 +25,20 @@ def digest(value):
 
 
 def write_json(path, value):
+    return write_if_changed(path, (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+
+
+def write_if_changed(path, content):
     path = Path(path)
+    assert_plain_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=".creator-notes-", suffix=".tmp", delete=False) as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
+    if path.is_file() and path.read_bytes() == content:
+        return False
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=".creator-notes-", suffix=".tmp", delete=False) as stream:
+        stream.write(content)
         temporary = Path(stream.name)
     temporary.replace(path)
+    return True
 
 
 def read_json(path, default=None):
@@ -52,7 +60,7 @@ def entry_for(python, install_root):
     root = Path(install_root).resolve()
     return {"command": str(Path(python).resolve()), "args": ["-m", "creator_notes.server"],
             "env": {"CREATOR_NOTES_HOME": str(root), "CREATOR_NOTES_MODELS": str(root / "models"),
-                    "PLAYWRIGHT_BROWSERS_PATH": str(root / "browsers"), "PYTHONUTF8": "1"}}
+                    "PLAYWRIGHT_BROWSERS_PATH": str(root / "browsers"), "PYTHONUTF8": "1", "HF_HUB_DISABLE_XET": "1"}}
 
 
 def skill_files(skill_source):
@@ -75,10 +83,14 @@ def generate(python, install_root, skill_source):
     # JSON string literals are also valid TOML basic strings for these paths.
     fragment = "[mcp_servers.creator-notes]\ncommand = " + json.dumps(entry["command"]) + "\nargs = [\"-m\", \"creator_notes.server\"]\n\n[mcp_servers.creator-notes.env]\n"
     fragment += "".join(key + " = " + json.dumps(value) + "\n" for key, value in entry["env"].items())
-    (output / "codex-mcp.toml").write_text(fragment, encoding="utf-8")
-    with zipfile.ZipFile(output / "creator-notes-skill.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    write_if_changed(output / "codex-mcp.toml", fragment.encode("utf-8"))
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as archive:
         for path, relative in skill_files(skill_source):
-            archive.write(path, (Path(PROJECT) / relative).as_posix())
+            info = zipfile.ZipInfo((Path(PROJECT) / relative).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, path.read_bytes())
+    write_if_changed(output / "creator-notes-skill.zip", payload.getvalue())
     return {"configuration": str(output / "workbuddy-mcp.json"), "skill": str(output / "creator-notes-skill.zip"), "codex_fragment": str(output / "codex-mcp.toml")}
 
 
@@ -111,6 +123,12 @@ def register_workbuddy(python, install_root, skill_source, user_dir):
     files = list(skill_files(skill_source))
     if not any(relative.as_posix() == "SKILL.md" for _, relative in files):
         raise ValueError("Skill source is incomplete; nothing was changed")
+    same_skill = skill_target.exists() and all((skill_target / relative).is_file() and
+                                               (skill_target / relative).read_bytes() == path.read_bytes()
+                                               for path, relative in files)
+    if (existing == entry and same_skill and receipt.get("user_dir") == str(user_dir) and
+            receipt.get("entry_sha256") == digest(entry)):
+        return {"config": str(config_path), "skill": str(skill_target), "backup": None, "unchanged": True}
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backups = root / "backups" / stamp
     if config_path.exists():
@@ -129,7 +147,7 @@ def register_workbuddy(python, install_root, skill_source, user_dir):
     config["mcpServers"] = servers
     write_json(config_path, config)
     write_json(receipt_path, {"project": PROJECT, "user_dir": str(user_dir), "entry_sha256": digest(entry), "registered_at": stamp})
-    return {"config": str(config_path), "skill": str(skill_target), "backup": str(backups) if backups.exists() else None}
+    return {"config": str(config_path), "skill": str(skill_target), "backup": str(backups) if backups.exists() else None, "unchanged": False}
 
 
 def main():
