@@ -40,11 +40,15 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     await session.initialize()
                     tools = {tool.name for tool in (await session.list_tools()).tools}
                     self.assertEqual(tools, {'check_creator', 'get_report', 'get_transcript', 'submit_review',
-                                            'start_login', 'login_status', 'resolve_creator_from_videos'})
+                                            'start_login', 'login_status', 'resume_check', 'resolve_creator_from_videos'})
+                    schemas = {tool.name: tool.inputSchema for tool in (await session.list_tools()).tools}
+                    self.assertTrue(schemas['start_login']['properties']['verification_window']['default'])
                     login = payload(await session.call_tool('login_status', {}))
                     self.assertEqual(login['status'], 'not_started')
                     report = payload(await session.call_tool('get_report', {'check_id': job['check_id']}))
                     self.assertFalse(report['delivery_complete'])
+                    rejected = await session.call_tool('resume_check', {'check_id': job['check_id']})
+                    self.assertTrue(rejected.isError)
                     segments, offset = [], 0
                     while True:
                         page = payload(await session.call_tool('get_transcript', {'check_id': job['check_id'], 'offset': offset, 'limit': 80}))

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -39,6 +40,7 @@ class DistributionTests(unittest.TestCase):
         config = json.loads(Path(generated["configuration"]).read_text(encoding="utf-8"))
         env = config["mcpServers"]["creator-notes"]["env"]
         self.assertEqual(env["PLAYWRIGHT_BROWSERS_PATH"], str(self.root / "browsers"))
+        self.assertEqual(env["HF_HUB_DISABLE_XET"], "1")
         with zipfile.ZipFile(generated["skill"]) as archive:
             self.assertEqual(archive.namelist(), ["creator-notes/SKILL.md"])
 
@@ -49,7 +51,12 @@ class DistributionTests(unittest.TestCase):
         result = configure.register_workbuddy(self.python, self.root, self.skill, self.user)
         backup = Path(result["backup"]) / "mcp.json"
         self.assertEqual(json.loads(backup.read_text(encoding="utf-8")), existing)
-        configure.register_workbuddy(self.python, self.root, self.skill, self.user)
+        config_time = (self.user / "mcp.json").stat().st_mtime_ns
+        backups = list((self.root / "backups").iterdir())
+        repeated = configure.register_workbuddy(self.python, self.root, self.skill, self.user)
+        self.assertTrue(repeated["unchanged"])
+        self.assertEqual((self.user / "mcp.json").stat().st_mtime_ns, config_time)
+        self.assertEqual(list((self.root / "backups").iterdir()), backups)
         updated = json.loads((self.user / "mcp.json").read_text(encoding="utf-8"))
         self.assertEqual(updated["other"], existing["other"])
         self.assertEqual(updated["mcpServers"]["existing-service"], existing["mcpServers"]["existing-service"])
@@ -116,6 +123,41 @@ class DistributionTests(unittest.TestCase):
         self.assertFalse((target / ".data").exists())
         with self.assertRaises(ValueError):
             copy.copy_source(source, target)
+
+    def test_unchanged_generated_files_are_not_rewritten_when_source_mtime_changes(self):
+        first = configure.generate(self.python, self.root, self.skill)
+        files = [Path(path) for path in first.values()]
+        before = {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in files}
+        skill_file = self.skill / "SKILL.md"
+        os.utime(skill_file, (skill_file.stat().st_atime, skill_file.stat().st_mtime + 30))
+        configure.generate(self.python, self.root, self.skill)
+        self.assertEqual({path: (path.stat().st_mtime_ns, path.read_bytes()) for path in files}, before)
+
+    def test_changed_skill_is_updated_with_backup_even_when_mcp_entry_is_unchanged(self):
+        configure.register_workbuddy(self.python, self.root, self.skill, self.user)
+        (self.skill / "SKILL.md").write_text("---\nname: creator-notes\ndescription: revised workflow\n---\n", encoding="utf-8")
+        result = configure.register_workbuddy(self.python, self.root, self.skill, self.user)
+        self.assertFalse(result["unchanged"])
+        self.assertTrue((Path(result["backup"]) / "creator-notes-skill" / "SKILL.md").exists())
+        self.assertEqual((self.user / "skills" / "creator-notes" / "SKILL.md").read_bytes(), (self.skill / "SKILL.md").read_bytes())
+
+    def test_previous_owned_registration_can_receive_process_local_download_settings(self):
+        configure.register_workbuddy(self.python, self.root, self.skill, self.user)
+        config_path = self.user / "mcp.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        old = config["mcpServers"]["creator-notes"]
+        old["env"].pop("HF_HUB_DISABLE_XET")
+        config["mcpServers"]["other-service"] = {"command": "keep-this"}
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        receipt_path = self.root / "integration" / "registration-receipt.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["entry_sha256"] = configure.digest(old)
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        result = configure.register_workbuddy(self.python, self.root, self.skill, self.user)
+        self.assertFalse(result["unchanged"])
+        updated = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(updated["mcpServers"]["creator-notes"]["env"]["HF_HUB_DISABLE_XET"], "1")
+        self.assertEqual(updated["mcpServers"]["other-service"], {"command": "keep-this"})
 
 
 if __name__ == "__main__":
