@@ -22,4 +22,8 @@ Retain the check ID. After an interrupted login, CAPTCHA, or recoverable transcr
 
 ## Evidence and completion
 
-Keep installation readiness, protocol checks, fixture tests, model loading, real speech transcription, and complete real creator delivery distinct. A login-required response is not successful collection; a synthetic tone returning no speech is not successful real-video transcription. Declare complete delivery only after all requested metrics, full timestamped speech, reviewed corrections, and overview are available. Report known remaining acceptance items honestly.
+Keep installation readiness, protocol checks, fixture tests, model loading, real speech transcription, and complete real creator delivery distinct. A login-required response is not successful collection; a synthetic tone returning no speech is not successful real-video transcription. For speech-bearing checks, reviewed delivery requires the requested metrics, timestamped machine speech, separate reviewed edition, and overview; language and coverage problems remain explicit. Report known remaining acceptance items honestly.
+
+For an explicitly requested public-history archive, read the Skill's archive reference and use the maintained inventory, exact-work, image, frame-evidence, and export tools. Inventory completion, content processing, primary-folder delivery, and speech accuracy are separate claims. Native `no_speech` is not proof of silence and must not receive invented transcript files. Actually inspect returned frames before supplying observations. The companion ZIP excludes original MP4 files even when its source folder includes them.
+
+Public source, documentation, fixtures, release notes, and packages must not include real collected creator identities, public account/profile/video IDs, titles, transcripts, media, login state, or personal paths. Use explicitly synthetic examples. User-requested content archives stay separate from open-source release artifacts.

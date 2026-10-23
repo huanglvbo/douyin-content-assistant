@@ -111,6 +111,24 @@ class DistributionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.scan_text(path)
 
+    def test_build_blocks_private_denylist_and_non_english_public_prose(self):
+        source = Path(self.temporary.name) / 'public-source'
+        source.mkdir()
+        (source / 'pyproject.toml').write_text('[project]\nversion="0.2.0"\n', encoding='utf-8')
+        readme = source / 'README.md'
+        readme.write_text('A protected fixture author appears here.', encoding='utf-8')
+        denylist = Path(self.temporary.name) / 'private-denylist.json'
+        denylist.write_text(json.dumps({'protected_fixture': ['protected fixture author']}), encoding='utf-8')
+        destination = Path(self.temporary.name) / 'rejected-release'
+        with self.assertRaisesRegex(ValueError, 'protected_fixture') as caught:
+            release.build(source, destination, denylist)
+        self.assertNotIn('protected fixture author', str(caught.exception))
+        self.assertFalse(destination.exists())
+        readme.write_text('\u516c\u5f00\u8bf4\u660e', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'non_english'):
+            release.build(source, destination)
+        self.assertFalse(destination.exists())
+
     def test_source_install_copy_never_copies_runtime_or_overlays_existing_tree(self):
         source = Path(self.temporary.name) / "downloaded source"
         source.mkdir()

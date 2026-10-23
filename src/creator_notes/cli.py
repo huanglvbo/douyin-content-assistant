@@ -71,6 +71,21 @@ def parser():
     review.add_argument('--request', required=True)
     prepare = sub.add_parser('prepare-model')
     prepare.add_argument('--model', choices=('base', 'small', 'medium'), default='small')
+    archive = sub.add_parser('archive', help='Enumerate a creator public-history inventory; no automatic ASR batch')
+    archive.add_argument('creator')
+    archive.add_argument('--max-scrolls', type=int, default=2000)
+    archive.add_argument('--max-seconds', type=int, default=1800)
+    archive_report = sub.add_parser('archive-report')
+    archive_report.add_argument('archive_id')
+    archive_report.add_argument('--offset', type=int, default=0)
+    archive_report.add_argument('--limit', type=int, default=50)
+    archive_work = sub.add_parser('archive-work', help='Transcribe one exact work in the retained inventory')
+    archive_work.add_argument('archive_id')
+    archive_work.add_argument('video_id')
+    archive_work.add_argument('--profile', choices=('fast', 'balanced', 'accurate'), default='balanced')
+    archive_export = sub.add_parser('archive-export')
+    archive_export.add_argument('archive_id')
+    archive_export.add_argument('--include-media', action='store_true')
     return result
 
 
@@ -107,8 +122,29 @@ def main():
         else:
             from .engine import Manager
             manager = Manager()
+            archives = None
             try:
-                if args.command == 'check':
+                if args.command.startswith('archive'):
+                    from .archive import ArchiveManager
+                    archives = ArchiveManager(manager)
+                    if args.command == 'archive':
+                        job = archives.start(args.creator, max_scrolls=args.max_scrolls, max_seconds=args.max_seconds)
+                        while job['status'] in ('queued', 'running'):
+                            time.sleep(.5)
+                            job = archives.report(job['archive_id'])
+                        output = job
+                    elif args.command == 'archive-report':
+                        output = archives.report(args.archive_id, args.offset, args.limit)
+                    elif args.command == 'archive-work':
+                        job = archives.submit_work(args.archive_id, args.video_id, args.profile)
+                        while job['status'] in ('queued', 'running'):
+                            time.sleep(.5)
+                            job = manager.report(job['check_id'])
+                        output = job
+                    elif args.command == 'archive-export':
+                        from .archive_export import ArchiveExporter
+                        output = ArchiveExporter(manager, archives).export(args.archive_id, args.include_media)
+                elif args.command == 'check':
                     job = manager.submit(args.creator, args.profile, args.refresh_identity)
                     last_stage = None
                     while job['status'] in ('queued', 'running'):
@@ -132,6 +168,8 @@ def main():
                     request = json.loads(Path(args.request).read_text(encoding='utf-8-sig'))
                     output = manager.review(args.check_id, request)
             finally:
+                if archives is not None:
+                    archives.close()
                 manager.close()
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0

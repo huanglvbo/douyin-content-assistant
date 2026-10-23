@@ -105,6 +105,25 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(self.manager.report(job['check_id'])['delivery_complete'])
         self.assertEqual(self.manager.store.history('author-one'), {})
 
+    def test_reused_transcript_retains_verified_timeline_recovery_provenance(self):
+        audit = {'strategy': 'one_full_input_shorter_chunk_retry', 'retry_count': 1,
+                 'full_input_replayed': True, 'input_cropped': False,
+                 'attempts': [{'attempt': 1, 'status': 'invalid_timeline'},
+                              {'attempt': 2, 'status': 'passed'}]}
+        def recognize(*args, **kwargs):
+            result = self.recognize(*args, **kwargs)
+            result['timeline_recovery'] = copy.deepcopy(audit)
+            return result
+        self.manager.recognize = recognize
+        first = wait(self.manager, self.manager.submit('test001'))
+        raw_hashes = copy.deepcopy(first['original_hashes'])
+        repeat = wait(self.manager, self.manager.submit('test001'))
+        self.assertNotEqual(first['check_id'], repeat['check_id'])
+        self.assertTrue(repeat['transcription']['reused'])
+        self.assertEqual(repeat['transcription']['timeline_recovery'], audit)
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(self.manager.report(first['check_id'])['original_hashes'], raw_hashes)
+
     def test_errors_do_not_persist_exception_payload(self):
         def fail(*args, **kwargs):
             raise RuntimeError('secret-cookie https://example.invalid?private-token=123')

@@ -1,60 +1,58 @@
-# Development validation record
+# Validation record
 
-Updated: October 23, 2026. Current version: 0.1.1 development preview.
+Updated October 23, 2026. Release scope: **v0.2.0 preview**.
 
-## Isolated real-provider validation
+This public record contains anonymized outcomes only. It omits the tested creator's name, account/profile/video identifiers, titles, exact interaction values, transcripts, media, login artifacts, personal paths, and internal task IDs. Runnable examples and fixtures are synthetic.
 
-An isolated run exercised real public collection, local timestamped speech recognition,
-and host-AI editorial review. Private evidence records contain the original failures,
-sampling receipts, source-preservation checks, and unresolved recognition issues.
-Creator identities, source links, interaction snapshots, media, transcripts, browser
-state, and login diagnostics are deliberately excluded from the public repository.
+## Isolated real public-history run
 
-This establishes the tested isolated path only. It does not establish clean Windows
-installation, target WorkBuddy loading, general creator coverage, complete speech
-recognition, elimination of platform verification, or scheduled execution. Unknown
-or uncertain wording remains explicit, and the user's separate WorkBuddy environment
-was preserved.
+The project was exercised against **a public creator** using its own dedicated login and isolated runtime. The user's independently modified WorkBuddy installation was not reinstalled or overwritten.
 
-## Local 0.1.1 recovery update, October 21, 2026
+| Recorded outcome | Count |
+| --- | ---: |
+| Accessible public works inventoried | 126 |
+| Video works | 124 |
+| Image posts | 2 |
+| Machine transcripts available | 105 |
+| Videos with no deliverable recognized speech and a visual overview | 19 |
+| Explicitly unresolved speech-quality cases among transcript-bearing works | 3 |
 
-- The updated suite ran 127 tests and finished OK, with three Windows symbolic-link subcases skipped. The first combined run exposed a UTF-8 fixture read using the Windows default encoding; the fixture was corrected explicitly and the full suite passed on rerun. Original run logs remain local and are excluded from packages.
-- A Windows PowerShell cached-install fixture ran with external networking blocked, no bootstrap executable, and no model files. It skipped completed package/browser stages and wrote successful stage timings. This establishes the unchanged-install path, not cold-machine installation speed.
-- The actual local public model cache was inspected without loading weights or downloading anything. A complete cached small model was found, and a missing base request selected small explicitly. Cache presence is not a new real-model inference test.
-- Offline recovery tests verify that a model failure retains the same check ID, metric sampling time, and audio; reconnect and concurrent resume do not repeat collection; modified checkpoints are rejected; stale login proof cannot resume a CAPTCHA job; and a new challenge stops again without a retry loop.
-- Mock login tests retain one visible dedicated context from QR through human verification. They distinguish scan, phone confirmation, verification, and finalization and require session plus additional login proof. No real slider was solved or real browser/account used in these tests.
-- Download tests verify empty-file rejection, disabling Xet before downloader imports, and at most one forced repair through the official Hugging Face endpoint. No live model download or mainland-network speed test was executed.
-- The real MCP stdio fixture now lists eight tools, including resume_check, retains full transcript/review checks, and verifies the visible-login argument default.
-- User-supplied WorkBuddy screenshots report manual model-download repair and a separate creator collection attempt. A login_required response and a synthetic 440 Hz tone returning no_speech are partial diagnostics, not complete real-video delivery acceptance. The independently modified WorkBuddy checkout was inspected without overwriting its source, session, model, or task data.
+The inventory reached an accepted listing end with pagination coverage and count checks. This establishes accessible public history returned for that account at that time, not historical private, deleted, restricted, or unavailable posts. Interaction values retain per-work sampling times and are not live counters.
 
-The recovery changes remain a development preview. The October 23 isolated run above adds real reviewed delivery and repaired live QR-extraction evidence. Clean Windows installation, target WorkBuddy loading, and scheduled execution remain separate acceptance items. The earlier 0.1.0 results below are historical evidence, not proof that these new paths were accepted in WorkBuddy.
+The run acquired actual media and image-post content, processed recognized speech locally, and prepared separate host-AI reviews and overviews. Originals and segment timestamps were preserved. Corrections retained uncertain wording and evidence labels. Reviewed artifacts and exports were checked for source consistency, relative-link integrity, and missing content.
 
-## Historical 0.1.0 validation, October 21, 2026
+Videos returning `no_speech` retained that classification. Visual overviews came from actually inspected, source-verified frame samples with explicit limits. No placeholder raw/corrected speech files were created, and ASR non-detection did not establish complete silence.
 
-### Executed in that historical pass
+Three transcript-bearing cases retained unresolved language, sparse-recognition, or speech-coverage issues. Inspected caption sequences were labeled visual evidence instead of merged into native speech. A separate diagnostic probe did not overwrite or become verified original speech. Available artifacts therefore do not imply word-complete recognition for those cases.
 
-- The full unittest suite ran 80 tests in the project's new isolated Python 3.12.15 virtual environment and finished OK. Two symbolic-link subcases were skipped because the Windows account lacked permission to create symbolic links. `pip check` passed.
-- A real MCP stdio subprocess initialized, listed seven tools, returned the logged-out state, paginated all 229 segments of a controlled transcript fixture, accepted a review, and returned the delivered report after shutdown and reconnection.
-- Offline tests cover creator identity, pinned versus newest posts, missing metrics, CAPTCHA stopping conditions, public-candidate verification, login-status allowlisting, media destination checks, download integrity, ASR timelines, original-file protection, and installation configuration merging.
-- Two defects were fixed with regression coverage: submitting a new fingerprint after modifying the original transcript, and reusing cached transcript content after it was changed.
-- A background task with a missing dependency reaches an explicit failure state instead of remaining queued indefinitely.
-- The independent recognition module processed real local speech. Source-specific durations, transcript quantities, and content remain only in private acceptance records. It used this project's source and public libraries rather than the previous application's recognition service.
-- A bounded real-speech test also ran in the isolated development environment using previously downloaded public model weights. The source audio and output are excluded from release packages.
-- Skill-format validation, PowerShell syntax parsing, and allowlisted source packaging passed.
-- Diagnostics in the isolated development environment confirmed public dependencies and Chromium were available. No Douyin session was saved or migrated. The installer's clean-machine download flow remains a separate acceptance item.
+## Fixes exercised and evidence limits
 
-These results establish source behavior, MCP protocol operation, and local recognition of real speech. They do not replace the user-environment acceptance below.
+- An official login-page redirect exposed a QR-extraction allowlist defect. The repair was separately checked against the signed-out official page. QR extraction, user-confirmed login, and a fresh WorkBuddy login are different acceptance events.
+- A real run exposed invalid ASR timing. The recognizer now permits one full-input retry with shorter chunks, retaining timing-failure/recovery facts. It does not crop input or discard failed segments to manufacture success. Persistent timing errors remain failures.
+- Durable checkpoints retain the exact selected work, creator binding, original sampling time, media size, and hash. Resume and cached-original reuse were exercised separately from inventory and export.
+- Image delivery, structured speech-quality warnings, visual overviews, and primary-folder versus companion-ZIP scope remain separate. The ZIP excludes MP4s and does not inherit a complete original-video claim from its source folder.
+- Automated validation covers identity/pagination, task admission and recovery, originals, timing failures, frame evidence, review validation, export links/checksums, and private-data exclusions. Fixture passes do not establish a new live account acceptance.
 
-### Not executed in that historical pass
+This is one isolated run, not a benchmark across creators, languages, hardware, networks, or every media type. Caption checks do not verify a speaker's technical, medical, business, or historical claims. Contextual corrections remain inferential unless their evidence was actually checked.
 
-The following describes the October 21 baseline, not the current acceptance state. Its MCP service had seven tools; the current 0.1.1 service has eight. The October 23 real capture/transcription result and current outstanding work are documented above.
+## Final source and protocol checks
 
-- Real Douyin media acquisition and complete creator delivery using this project's own dedicated login state; no cookies or account bindings were copied from the previous project.
-- Running the complete installer on a clean Windows machine without Python preinstalled.
-- Loading the Skill and all seven tools in WorkBuddy, scanning with the user's own mobile account, completing delivery, and running a local scheduled task.
+- The full automated suite ran **247 tests** and finished **OK, with four skipped**. Skipped checks are not counted as executed acceptance.
+- A native MCP stdio fixture used a **generated MP4** to verify frame capture, host visual-overview submission, export, service restart, and durable re-export. It exercised the actual tool/protocol path with controlled generated media; it did not perform a real login, network collection, model download, or real-model inference.
+- The public-source gate checked **57 selected files** with **zero errors**. This is a selected-source check, not verification of a built release archive.
+- The maintained release builder produced source and Skill ZIPs. Package verification passed ZIP integrity, all 57 source-manifest hashes, both SHA-256 sums, Skill/source consistency, and protected-value checks with zero privacy errors. This verifies package contents, not a fresh WorkBuddy installation.
 
-## Project repository
+## Earlier preview evidence
 
-The project is published as **Douyin Content Assistant** at [huanglvbo/douyin-content-assistant](https://github.com/huanglvbo/douyin-content-assistant). Publishing source and accepting the application in WorkBuddy are separate steps. The public repository and download packages remain labeled as a development preview.
+Earlier v0.1.x work exercised a real latest-post check, local recognition, semantic review, immutable originals, MCP pagination/reconnection, model-cache handling, and recoverable login/model failures. Synthetic-tone tests established honest `no_speech` handling, not real-speech accuracy. Cached-install fixtures established stage reuse, not cold-install speed or target-client acceptance.
 
-See [release acceptance](acceptance.md) for the remaining checks. The source package contains code, tests, documentation, and licenses, excluding the real audio, transcripts, models, login state, and development environment used in validation.
+Those results remain bounded to their executed environment and version. Detailed private artifacts are not included in public docs, release notes, fixtures, or source packages.
+
+## Not revalidated in this release
+
+- Fresh Windows x64 installation without Python preinstalled, including cold downloads and target-network performance.
+- Import or automatic registration of the connector and Skill in a fresh target WorkBuddy installation.
+- That client's own QR login, human slider if requested, complete creator delivery, and local scheduled execution.
+- General transcription accuracy, every language or lyric, word-level realignment, or removal of platform verification.
+
+These remain separate [release acceptance checks](acceptance.md). Source and packages remain **preview**.

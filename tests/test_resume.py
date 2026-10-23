@@ -81,6 +81,76 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(resumed['status'], 'done')
         self.assertEqual((self.collected, self.downloaded), (1, 1))
 
+    def test_timeline_retry_preserves_media_metrics_and_first_failure(self):
+        def recognize(source, model_dir, **kwargs):
+            if self.recognized == 0:
+                self.recognized += 1
+                raise RecognitionError('invalid_timeline', 'Controlled out-of-duration segment')
+            return self.recognize(source, model_dir, **kwargs)
+
+        self.manager.recognize = recognize
+        failed = self.failed()
+        self.assertEqual(failed['error_code'], 'invalid_timeline')
+        checkpoint = copy.deepcopy(failed['media_checkpoint'])
+        resumed = wait(self.manager, self.manager.resume(failed['check_id']))
+        self.assertEqual(resumed['status'], 'done')
+        self.assertEqual(resumed['check_id'], failed['check_id'])
+        self.assertEqual(resumed['media_checkpoint'], checkpoint)
+        self.assertEqual(resumed['latest'], failed['latest'])
+        self.assertEqual(resumed['collected_at'], failed['collected_at'])
+        self.assertEqual(resumed['attempt_history'][0]['error_code'], 'invalid_timeline')
+        self.assertTrue(resumed['transcription']['media_reused'])
+        self.assertEqual((self.collected, self.downloaded, self.recognized), (1, 1, 2))
+
+    def test_timeline_retry_rejects_changed_saved_media(self):
+        def invalid(*args, **kwargs):
+            self.recognized += 1
+            raise RecognitionError('invalid_timeline', 'Controlled invalid timeline')
+
+        self.manager.recognize = invalid
+        failed = self.failed()
+        Path(failed['media_checkpoint']['path']).write_bytes(b'changed-media')
+        with self.assertRaisesRegex(ValueError, 'Saved media changed'):
+            self.manager.resume(failed['check_id'])
+        self.assertEqual((self.collected, self.downloaded, self.recognized), (1, 1, 1))
+
+    def test_invalid_transcript_is_not_made_resumable_by_timeline_recovery(self):
+        def invalid(*args, **kwargs):
+            raise RecognitionError('invalid_transcript', 'Controlled invalid text')
+
+        self.manager.recognize = invalid
+        failed = wait(self.manager, self.manager.submit('test001'))
+        self.assertFalse(failed['resume_available'])
+        with self.assertRaisesRegex(ValueError, 'cannot resume'):
+            self.manager.resume(failed['check_id'])
+
+    def test_timeline_recovery_audit_survives_success_and_failed_native_reports(self):
+        audit = {'strategy': 'one_full_input_shorter_chunk_retry', 'retry_count': 1,
+                 'full_input_replayed': True, 'input_cropped': False,
+                 'attempts': [{'attempt': 1, 'status': 'invalid_timeline'},
+                              {'attempt': 2, 'status': 'invalid_timeline'}]}
+
+        def recognize(source, model_dir, **kwargs):
+            if self.recognized == 0:
+                self.recognized += 1
+                error = RecognitionError('invalid_timeline', 'Not serialized')
+                error.timeline_recovery = copy.deepcopy(audit)
+                raise error
+            result = self.recognize(source, model_dir, **kwargs)
+            result['timeline_recovery'] = copy.deepcopy(audit)
+            result['timeline_recovery']['attempts'][1]['status'] = 'passed'
+            return result
+
+        self.manager.recognize = recognize
+        failed = self.failed()
+        self.assertEqual(failed['timeline_recovery'], audit)
+        resumed = wait(self.manager, self.manager.resume(failed['check_id']))
+        self.assertEqual(resumed['status'], 'done')
+        self.assertEqual(resumed['transcription']['timeline_recovery']['attempts'][1]['status'], 'passed')
+        exported = Path(resumed['files']['report.json']).read_text(encoding='utf-8')
+        self.assertIn('one_full_input_shorter_chunk_retry', exported)
+        self.assertNotIn('Not serialized', exported)
+
     def test_changed_or_missing_media_is_rejected_before_network_or_asr(self):
         failed = self.failed()
         Path(failed['media_checkpoint']['path']).write_bytes(b'tampered')

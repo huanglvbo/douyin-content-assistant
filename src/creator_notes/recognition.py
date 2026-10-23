@@ -31,6 +31,7 @@ MODEL_DOWNLOAD_FILES = ('config.json', 'preprocessor_config.json', 'model.bin', 
 MAX_SOURCE_BYTES = 2 * 1024**3
 MAX_DURATION_SECONDS = 4 * 60 * 60
 MAX_SEGMENTS = 100_000
+TIMELINE_RETRY_CHUNK_LENGTH = 20
 
 
 class RecognitionError(RuntimeError):
@@ -202,6 +203,87 @@ def _seconds(value, label: str) -> float:
     return number
 
 
+def _audit_seconds(value):
+    """Retain numeric timing facts without serializing arbitrary model values."""
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        return None
+    try:
+        return float(value) if math.isfinite(value) and abs(value) <= MAX_DURATION_SECONDS * 2 else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def _timeline_failure(error, *, duration, index=None, previous_start=None, item=None, reasons):
+    error.timeline_failure = {
+        'duration_seconds': _audit_seconds(duration),
+        'segment_index': index if isinstance(index, int) and 0 <= index <= MAX_SEGMENTS else None,
+        'previous_start': _audit_seconds(previous_start),
+        'start': _audit_seconds(getattr(item, 'start', None)),
+        'end': _audit_seconds(getattr(item, 'end', None)), 'reasons': reasons,
+    }
+    return error
+
+
+def _transcription_pass(recognizer, source, progress, chunk_length=None):
+    options = {'beam_size': 5, 'vad_filter': True,
+               'condition_on_previous_text': False, 'word_timestamps': False}
+    if chunk_length is not None:
+        options['chunk_length'] = chunk_length
+    # Each pass receives the same complete input, without clip timestamps,
+    # cropped audio, or manually removed/rewritten model segments.
+    stream, info = recognizer.transcribe(str(source), **options)
+    try:
+        duration = _seconds(info.duration, 'audio duration')
+    except RecognitionError as exc:
+        raise _timeline_failure(exc, duration=info.duration, reasons=['invalid_audio_duration'])
+    if not 0 < duration <= MAX_DURATION_SECONDS:
+        raise RecognitionError('duration_limit', 'The audio duration is zero or exceeds the four-hour transcription limit.')
+    result = []
+    previous_start = 0.0
+    for index, item in enumerate(stream):
+        _notify(progress, 'Transcribing audio', min(1.0, previous_start / duration))
+        try:
+            start, end = _seconds(item.start, 'start time'), _seconds(item.end, 'end time')
+        except RecognitionError as exc:
+            raise _timeline_failure(exc, duration=duration, index=index,
+                previous_start=previous_start, item=item, reasons=['invalid_numeric_timestamp'])
+        reasons = []
+        if start < previous_start:
+            reasons.append('start_before_previous_start')
+        if end <= start:
+            reasons.append('end_not_after_start')
+        if start >= duration:
+            reasons.append('start_at_or_after_duration')
+        if end > duration + 0.5:
+            reasons.append('end_more_than_half_second_after_duration')
+        if reasons:
+            error = RecognitionError('invalid_timeline', 'Speech recognition returned invalid segment timestamps.')
+            raise _timeline_failure(error, duration=duration, index=index,
+                previous_start=previous_start, item=item, reasons=reasons)
+        if not isinstance(item.text, str):
+            raise RecognitionError('invalid_transcript', 'Speech recognition returned invalid segment text.')
+        text = item.text.strip()
+        if '\x00' in text or len(text) > 32_000:
+            raise RecognitionError('invalid_transcript', 'Speech recognition returned invalid segment text.')
+        previous_start = start
+        if not text:
+            continue
+        if len(result) >= MAX_SEGMENTS:
+            raise RecognitionError('segment_limit', 'Speech recognition returned too many segments.')
+        # Keep the pre-existing <= 0.5 second rounding normalization unchanged.
+        # Larger overruns reject the entire pass and are never clipped away.
+        result.append({'start': start, 'end': min(end, duration), 'text': text})
+    if not result:
+        raise RecognitionError('no_speech', 'No deliverable speech was recognized. No transcript was fabricated.')
+    return {'segments': result, 'transcript': '\n'.join(item['text'] for item in result),
+            'duration': duration, 'language': str(getattr(info, 'language', '') or '')}
+
+
+def _recovery_metadata(attempts):
+    return {'strategy': 'one_full_input_shorter_chunk_retry', 'retry_count': max(0, len(attempts) - 1),
+            'full_input_replayed': len(attempts) > 1, 'input_cropped': False, 'attempts': attempts}
+
+
 def transcribe_file(source: Path, model_dir: Path, model='small', progress=None, prefer_cached=False) -> dict:
     """Return the full spoken transcript and segment timestamps.
 
@@ -209,7 +291,9 @@ def transcribe_file(source: Path, model_dir: Path, model='small', progress=None,
     caller-controlled cache (normally AppPaths.models, which respects
     CREATOR_NOTES_MODELS). Returning False from ``progress(stage, fraction)``
     cancels between model/segment operations. Timestamps cover recognized
-    speech; silence is not filled with invented text.
+    speech; silence is not filled with invented text. An invalid timeline can
+    trigger one full-input replay with shorter chunks; its audit facts remain
+    separate from the returned successful machine transcript.
     """
     source = Path(source).expanduser()
     if source.is_symlink() or not source.is_file():
@@ -227,48 +311,47 @@ def transcribe_file(source: Path, model_dir: Path, model='small', progress=None,
              f'Preparing {selected} speech model; a first-use download may be required')
     _notify(progress, stage, None)
     recognizer = _load_model(selection['cache_path'] or selected, cache)
+    attempts = []
     try:
         _notify(progress, 'Transcribing audio', 0.0)
-        stream, info = recognizer.transcribe(
-            str(source), beam_size=5, vad_filter=True,
-            condition_on_previous_text=False, word_timestamps=False,
-        )
-        duration = _seconds(info.duration, 'audio duration')
-        if not 0 < duration <= MAX_DURATION_SECONDS:
-            raise RecognitionError('duration_limit', 'The audio duration is zero or exceeds the four-hour transcription limit.')
-        result = []
-        previous_start = 0.0
-        for item in stream:
-            _notify(progress, 'Transcribing audio', min(1.0, previous_start / duration))
-            start, end = _seconds(item.start, 'start time'), _seconds(item.end, 'end time')
-            if start < previous_start or end <= start or start >= duration or end > duration + 0.5:
-                raise RecognitionError('invalid_timeline', 'Speech recognition returned invalid segment timestamps.')
-            if not isinstance(item.text, str):
-                raise RecognitionError('invalid_transcript', 'Speech recognition returned invalid segment text.')
-            text = item.text.strip()
-            if '\x00' in text or len(text) > 32_000:
-                raise RecognitionError('invalid_transcript', 'Speech recognition returned invalid segment text.')
-            previous_start = start
-            if not text:
+        for attempt, chunk_length in enumerate((None, TIMELINE_RETRY_CHUNK_LENGTH), 1):
+            try:
+                result = _transcription_pass(recognizer, source, progress, chunk_length)
+            except RecognitionError as exc:
+                if exc.code != 'invalid_timeline':
+                    if attempts:
+                        status = exc.code if exc.code in {'no_speech', 'cancelled', 'duration_limit',
+                            'invalid_transcript', 'segment_limit', 'transcription_failed'} else 'transcription_failed'
+                        attempts.append({'attempt': attempt, 'chunk_length_seconds': chunk_length, 'status': status})
+                    raise
+                attempts.append({'attempt': attempt, 'chunk_length_seconds': chunk_length,
+                    'status': 'invalid_timeline', 'failure': getattr(exc, 'timeline_failure', {})})
+                if attempt == 2:
+                    raise
+                _notify(progress, 'Retrying the full audio once with shorter speech chunks', 0.0)
                 continue
-            if len(result) >= MAX_SEGMENTS:
-                raise RecognitionError('segment_limit', 'Speech recognition returned too many segments.')
-            result.append({'start': start, 'end': min(end, duration), 'text': text})
-        if not result:
-            raise RecognitionError('no_speech', 'No deliverable speech was recognized. No transcript was fabricated.')
-        _notify(progress, 'Transcription complete', 1.0)
-        return {
-            'segments': result,
-            'transcript': '\n'.join(item['text'] for item in result),
-            'duration': duration,
-            'model': selected,
-            'requested_model': model,
-            'model_selection': selection,
-            'language': str(getattr(info, 'language', '') or ''),
-        }
-    except RecognitionError:
+            except Exception:
+                if attempts:
+                    attempts.append({'attempt': attempt, 'chunk_length_seconds': chunk_length,
+                                     'status': 'transcription_failed'})
+                raise
+            if attempts:
+                attempts.append({'attempt': attempt, 'chunk_length_seconds': chunk_length, 'status': 'passed',
+                                 'duration_seconds': result['duration'], 'segments': len(result['segments'])})
+                result['timeline_recovery'] = _recovery_metadata(attempts)
+            _notify(progress, 'Transcription complete', 1.0)
+            return dict(result, model=selected, requested_model=model, model_selection=selection)
+    except RecognitionError as exc:
+        if attempts:
+            exc.timeline_recovery = _recovery_metadata(attempts)
         raise
     except KeyboardInterrupt:
-        raise RecognitionError('cancelled', 'Local speech recognition was cancelled.') from None
+        error = RecognitionError('cancelled', 'Local speech recognition was cancelled.')
+        if attempts:
+            error.timeline_recovery = _recovery_metadata(attempts)
+        raise error from None
     except Exception:
-        raise RecognitionError('transcription_failed', 'Local transcription did not complete. Check the audio and model environment.') from None
+        error = RecognitionError('transcription_failed', 'Local transcription did not complete. Check the audio and model environment.')
+        if attempts:
+            error.timeline_recovery = _recovery_metadata(attempts)
+        raise error from None

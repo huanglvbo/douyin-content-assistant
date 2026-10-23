@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
+import os
 from pathlib import Path
 import re
+import sys
 import tomllib
 import zipfile
 
 
 ROOT_FILES = {"pyproject.toml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore", "AGENTS.md"}
 ROOT_SUFFIXES = {"src": {".py"}, "scripts": {".py", ".ps1", ".cmd"}, "tests": {".py"}, "skills": {".md", ".yaml", ".yml"}, "docs": {".md"}}
-DENIED_NAMES = {".data", ".venv", "__pycache__", ".git", ".env", "runtime.json", "storage-state.json", "node_modules", "verification", "reports", "models", "output", ".local-test"}
+DENIED_NAMES = {".data", ".venv", "__pycache__", ".git", ".env", "runtime.json", "storage-state.json", "node_modules", "verification", "reports", "models", "output", ".local-test", "session", "browser-profile", "work", "backups", "exports"}
 
 
 def selected_files(root):
@@ -39,12 +42,30 @@ def scan_text(path):
         raise ValueError("Developer-specific absolute path in source: " + Path(path).name)
 
 
-def build(root, output):
+def check_public_files(files, denylist=None):
+    name = '_creator_notes_public_release_guard'
+    module = sys.modules.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name('check_public_tree.py'))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    protected = module.load_denylist(denylist or os.environ.get('CREATOR_NOTES_PUBLIC_DENYLIST'))
+    for path, relative in files:
+        findings = module.inspect_bytes(relative.as_posix(), path.read_bytes(), protected)
+        errors = [item for item in findings if item.severity == 'error']
+        if errors:
+            issue = errors[0]
+            raise ValueError('Public release content check failed: ' + issue.path + ' (' + issue.category + ')')
+
+
+def build(root, output, denylist=None):
     root, output = Path(root).resolve(), Path(output).resolve()
     version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[a-z0-9.-]+)?", version):
         raise ValueError("Unsupported release version")
     files = list(selected_files(root))
+    check_public_files(files, denylist)
     for path, _ in files:
         scan_text(path)
     manifest = {relative.as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path, relative in files}
@@ -69,8 +90,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--denylist", type=Path, help="Ignored local protected-value list; never packaged")
     args = parser.parse_args()
-    print(json.dumps(build(args.root, args.output or args.root / "dist"), ensure_ascii=False, indent=2))
+    print(json.dumps(build(args.root, args.output or args.root / "dist", args.denylist), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

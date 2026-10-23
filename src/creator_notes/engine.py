@@ -206,7 +206,7 @@ class Manager:
         with self.lock:
             active = [job for job in self.store.jobs() if job['status'] in ('queued', 'running')]
             for job in active:
-                if job['query'] == creator and job['asr_profile'] == profile:
+                if job['query'] == creator and job['asr_profile'] == profile and not job.get('archive_id'):
                     return job
             if len(active) >= 8:
                 raise ValueError('Queue is full; wait for current checks')
@@ -216,6 +216,62 @@ class Manager:
                    'owner_pid': os.getpid(), 'created_at': now(), 'refresh_identity': bool(refresh_identity)}
             self.store.save(job)
             self.pool.submit(self.run, job['check_id'], refresh_identity)
+            return job
+
+    def submit_archive_work(self, archive_id, identity, work, collected_at, profile='balanced'):
+        """Transcribe one work from the controller's persisted, verified inventory.
+
+        This entry does not discover arbitrary video URLs or call collect_latest.
+        The archive controller selects the exact work from its owned inventory.
+        """
+        from .collector import SEC_UID
+        archive_id = valid_id(archive_id)
+        if profile not in MODELS or not isinstance(identity, dict) or not isinstance(work, dict):
+            raise ValueError('Invalid archive work request')
+        author = identity.get('sec_uid', '')
+        video_id = work.get('video_id', '')
+        if (not isinstance(author, str) or not SEC_UID.fullmatch(author)
+                or not isinstance(video_id, str) or not re.fullmatch(r'[0-9]{5,30}', video_id)
+                or work.get('url') != 'https://www.douyin.com/video/' + video_id
+                or work.get('author_sec_uid') not in ('', author)
+                or work.get('kind') not in ('video', 'image')):
+            raise ValueError('The archived work does not match its verified creator')
+        statistics = work.get('statistics')
+        if not isinstance(statistics, dict) or set(statistics) != set(METRICS):
+            raise ValueError('Invalid archived metrics')
+        if any(value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0)
+               for value in statistics.values()):
+            raise ValueError('Invalid archived metric value')
+        try:
+            if datetime.fromisoformat(collected_at).tzinfo is None:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValueError('An archive metric sampling time with timezone is required') from None
+        # Copy only public fields; the inventory cannot inject paths or job state.
+        identity = {key: identity.get(key, '') for key in
+                    ('sec_uid', 'nickname', 'unique_id', 'short_id', 'uid', 'profile_url', 'signature')}
+        work = {key: work.get(key) for key in
+                ('video_id', 'title', 'create_time', 'published_at', 'url', 'duration_seconds',
+                 'statistics', 'pinned', 'kind', 'aweme_type', 'author_sec_uid')}
+        with self.lock:
+            for entry in self.store.jobs():
+                if (entry.get('archive_id') == archive_id and entry.get('archive_video_id') == video_id
+                        and entry['asr_profile'] == profile):
+                    return entry
+            if self.stopping.is_set():
+                raise ValueError('The worker is stopping; reconnect before submitting archive work')
+            if len([entry for entry in self.store.jobs() if entry['status'] in ('queued', 'running')]) >= 8:
+                raise ValueError('Queue is full; wait for current checks')
+            source = json.loads(json.dumps({'profile': identity, 'latest': work,
+                'coverage': {'selection': 'exact work from a verified public creator inventory',
+                             'archive_id': archive_id}, 'collected_at': collected_at}, allow_nan=False))
+            job = {'check_id': uuid.uuid4().hex, 'query': identity['unique_id'] or identity['profile_url'],
+                   'asr_profile': profile, 'status': 'queued', 'stage': 'Waiting to transcribe archived work',
+                   'complete': False, 'delivery_complete': False, 'review_status': 'not_started',
+                   'owner_pid': os.getpid(), 'created_at': now(), 'refresh_identity': False,
+                   'archive_id': archive_id, 'archive_video_id': video_id, 'archive_source': source}
+            self.store.save(job)
+            self.pool.submit(self.run, job['check_id'], False)
             return job
 
     def _saved_media(self, job):
@@ -254,7 +310,7 @@ class Manager:
                 raise ValueError('Unknown transcription profile')
             blocked = job['status'] in ('captcha', 'login_required')
             model_error = job['status'] == 'error' and job.get('error_code') in {
-                'model_unavailable', 'dependency_missing', 'transcription_failed'}
+                'model_unavailable', 'dependency_missing', 'transcription_failed', 'invalid_timeline'}
             if not (blocked or model_error or job['status'] == 'interrupted') or job.get('files'):
                 raise ValueError('This job cannot resume; start a new check instead')
             if blocked:
@@ -342,18 +398,20 @@ class Manager:
 
             collected = ({'latest': job['latest'], 'profile': job['profile'],
                           'coverage': job.get('coverage'), 'collected_at': job['collected_at']}
-                         if saved_media else asyncio.run(collect()))
+                         if saved_media else job.get('archive_source') or asyncio.run(collect()))
             if collected is None:
                 return
             video, identity = collected['latest'], collected.get('profile') or job['profile']
             history = self.store.history(identity['sec_uid'])
             previous = history.get(video['video_id'])
             latest_time = max((entry['latest'].get('create_time') or 0 for entry in history.values()), default=0)
-            state = 'no_update' if previous else ('first_check' if not history else
-                'new_video' if (video.get('create_time') or 0) > latest_time else 'previously_unseen_latest')
+            state = ('archive_item' if job.get('archive_id') else
+                'no_update' if previous else ('first_check' if not history else
+                'new_video' if (video.get('create_time') or 0) > latest_time else 'previously_unseen_latest'))
             update(profile=identity, latest=video, update_state=state, coverage=collected.get('coverage'), collected_at=collected['collected_at'])
             if video.get('kind') == 'image':
-                update(status='unsupported_latest', stage='The newest work is an image post; no spoken transcript can be delivered', finished_at=now())
+                update(status='unsupported_latest', stage=('This archived work is an image post; speech transcription is unavailable'
+                    if job.get('archive_id') else 'The newest work is an image post; no spoken transcript can be delivered'), finished_at=now())
                 return
             missing = [name for name in METRICS if video['statistics'].get(name) is None]
             update(missing_metrics=missing)
@@ -369,6 +427,8 @@ class Manager:
                         transcript = {'segments': json.loads(raw.read_text(encoding='utf-8')),
                             'transcript': Path(cached['files']['transcript.txt']).read_text(encoding='utf-8'),
                             'duration': cached['transcription']['duration_seconds'], 'model': model}
+                        if cached['transcription'].get('timeline_recovery'):
+                            transcript['timeline_recovery'] = cached['transcription']['timeline_recovery']
                 except (OSError, ValueError, KeyError):
                     transcript = None
             reused = transcript is not None
@@ -400,6 +460,10 @@ class Manager:
                            'media_reused': bool(saved_media), 'duration_seconds': transcript['duration'],
                            'segments': len(transcript['segments']), 'characters': len(transcript['transcript']),
                            'reused': reused, 'machine_transcript': True})
+            if transcript.get('timeline_recovery'):
+                # Recognition records controlled timing facts separately from
+                # the successful transcript; keep them in the native report.
+                job['transcription']['timeline_recovery'] = transcript['timeline_recovery']
             export_report(job, transcript, self.paths.reports)
             self.store.save(job)
         except Exception as exc:
@@ -407,10 +471,13 @@ class Manager:
             # Never serialize arbitrary exception strings, URLs or credentials.
             known = {'captcha', 'login_required', 'identity_unverified', 'no_data', 'not_found', 'ambiguous'}
             status = 'interrupted' if isinstance(exc, InterruptedError) else code if code in known else 'error'
+            from .recognition import RecognitionError
+            if isinstance(exc, RecognitionError) and getattr(exc, 'timeline_recovery', None):
+                update(timeline_recovery=exc.timeline_recovery)
             update(status=status, complete=False,
                    delivery_complete=False, error_code=code,
                    resume_available=status in ('captcha', 'login_required', 'interrupted') or code in
-                       ('model_unavailable', 'dependency_missing', 'transcription_failed'),
+                       ('model_unavailable', 'dependency_missing', 'transcription_failed', 'invalid_timeline'),
                    stage=('Human verification is required; complete it in the dedicated login window before resuming'
                           if status == 'captcha' else 'Check incomplete; saved work is retained for retry'), finished_at=now())
 

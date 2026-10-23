@@ -40,7 +40,10 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     await session.initialize()
                     tools = {tool.name for tool in (await session.list_tools()).tools}
                     self.assertEqual(tools, {'check_creator', 'get_report', 'get_transcript', 'submit_review',
-                                            'start_login', 'login_status', 'resume_check', 'resolve_creator_from_videos'})
+                                            'start_login', 'login_status', 'resume_check', 'resolve_creator_from_videos',
+                                            'start_creator_archive', 'get_creator_archive', 'transcribe_archive_work',
+                                            'capture_archive_images', 'capture_archive_video_frames',
+                                            'submit_archive_video_overview', 'export_creator_archive'})
                     schemas = {tool.name: tool.inputSchema for tool in (await session.list_tools()).tools}
                     self.assertTrue(schemas['start_login']['properties']['verification_window']['default'])
                     login = payload(await session.call_tool('login_status', {}))

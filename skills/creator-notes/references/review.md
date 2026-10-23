@@ -35,4 +35,16 @@ Use empty arrays when there are no edits or pending items, but still submit an o
 
 Allowed `evidence_level` values are `user_confirmed` (explicit user correction), `metadata_spelling` (proper-name spelling), `context_inferred` (contextual inference), `audio_checked` (actual replay), `caption_checked` (actual caption verification), and `script_normalization` (writing-form normalization). `confidence` is `high` or `medium`. Preserve low-confidence wording and mark it pending.
 
-The tool validates hashes, indices, original text, and time ranges, then saves separate reviewed files. Check `get_report` for `review_status`, reviewed file paths, and `delivery_complete` before reporting completion. Successful export validation does not establish semantic accuracy.
+The tool validates hashes, indices, original text, and time ranges, then saves separate reviewed files. Check `get_report` for `review_status`, reviewed file paths, and `delivery_complete` before reporting completion. Successful validation establishes source consistency, not semantic, acoustic, or factual accuracy.
+
+## Coverage, language, and visual text
+
+Read the complete native handoff even when it is sparse or its detected language looks wrong. Preserve those original words and mark unsupported wording pending. Do not replace a foreign-language segment with a translated caption, use a separate diagnostic probe as verified speech, or merge new segments into immutable machine originals.
+
+The final recognized segment may end before the media does. That gap is not proof of silence, complete recognition, or an empty outro. Describe the known coverage and the evidence actually inspected. If maintained frame tools are used, keep observed text or visual content in separately labeled overview chapters, using actual sample times and first/last sampled caption appearances. Sample timing is not exact subtitle onset/offset. Audio not replayed, motion between samples, and possibly missed short captions remain explicit limits.
+
+For an archive work with unresolved speech language or coverage, also record the structured quality flag through the maintained visual-overview workflow in [archive.md](archive.md). An exported corrected edition can still contain an explicitly unreliable machine handoff; file availability must not hide that issue.
+
+A native `no_speech` result has no speech-review request to fill. Use its verified original media and actually inspected frames for a separate evidence-limited visual overview. Never create placeholder raw or corrected transcripts. Image posts likewise retain their actual images without invented speech.
+
+Timeline recovery belongs to the recognizer. It may retry the complete input once with shorter chunks and retain audit metadata. Do not manually crop input, delete out-of-range segments, invent timing, or start an unbounded retry loop to make a failed pass look successful.
