@@ -4,6 +4,10 @@ Creator name or ID -> host AI reads the Skill -> local stdio MCP -> dedicated br
 
 MCP is the tool communication protocol. The Skill supplies workflow and evidence rules. Playwright provides browser capabilities, and Whisper provides speech recognition. This project's code manages downloads, tasks, originals, pagination, revision validation, and delivery history without another transcription application, HTTP backend, or its access token.
 
+Model-cache preparation runs before collection. The requested and selected models are explicit, and complete local weights are loaded without a network lookup. A durable media checkpoint binds a completed audio download to its task, creator, video, byte count, and SHA-256. `resume_check` claims a paused task atomically and reuses only a valid checkpoint. CAPTCHA/login recovery requires a newer successful dedicated login; platform challenges are never solved by the program.
+
+The dedicated login window remains available from QR scan through any human slider check. The host polls distinct scan, phone-confirmation, verification, and finalization states, then continues the saved task. A new collection challenge stops again. This retains a clear human boundary without requiring the user to reissue a creator request.
+
 Runtime data defaults to `%LOCALAPPDATA%/CreatorNotes`: `session` stores dedicated Douyin login state, `models` stores speech models, `work` stores temporary media, and `reports` stores delivered files. Users can configure `CREATOR_NOTES_HOME`, `CREATOR_NOTES_MODELS`, and `CREATOR_NOTES_OUTPUT`. The installer generates the current user's actual paths for the client instead of embedding developer-machine paths.
 
 The database stores tasks and successful delivery history. Machine transcription alone does not complete delivery. The video enters successful delivery history only after all four metrics are available and the review has been saved. Recollection can refresh metrics. Each check processes the latest verifiable post in the recent window; it does not automatically recover every publication between checks.
